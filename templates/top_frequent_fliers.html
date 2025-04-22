@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<h2><i class="fas fa-crown"></i> Frequent Flier Leaderboard</h2>
+
+{% if rows %}
+<table border="1">
+    <thead>
+        <tr>
+            <th>Rank</th>
+            <th>Person ID</th>
+            <th>First Name</th>
+            <th>Last Name</th>
+            <th>Total Miles</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td>
+                {% if row[0] == 1 %}
+                    🥇 {{ row[0] }}
+                {% elif row[0] == 2 %}
+                    🥈 {{ row[0] }}
+                {% elif row[0] == 3 %}
+                    🥉 {{ row[0] }}
+                {% else %}
+                    {{ row[0] }}
+                {% endif %}
+            </td>
+            <td>{{ row[1] }}</td>
+            <td>{{ row[2] }}</td>
+            <td>{{ row[3] }}</td>
+            <td>{{ row[4] }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No frequent fliers found.</p>
+{% endif %}
+
+<a href="/">Back to Home</a>
+{% endblock %}

@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SAMS</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://kit.fontawesome.com/a2b5e2ec03.js" crossorigin="anonymous"></script>
+</head>
+<body style="font-family: 'Inter', sans-serif;">
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

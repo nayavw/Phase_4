@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Flights in the Air</h2>
+
+{% if rows %}
+<table border="1">
+    <thead>
+        <tr>
+            {% for col in columns %}
+                <th>{{ col }}</th>
+            {% endfor %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            {% for item in row %}
+                <td>{{ item }}</td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No flights currently in the air.</p>
+{% endif %}
+
+<a href="/">Back to Home</a>
+{% endblock %}

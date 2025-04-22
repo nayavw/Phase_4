@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Add Airplane</h2>
+<form method="post">
+    <label>Tail Number:</label><input type="text" name="tail_num" required><br>
+    <label>Model:</label><input type="text" name="model"><br>
+    <label>Seat Capacity:</label><input type="number" name="seat_cap" required><br>
+    <label>Plane Type:</label><input type="text" name="plane_type" required><br>
+    <label>Speed:</label><input type="number" name="speed" required><br>
+    <label>Maintained:</label><input type="text" name="maintained"><br>
+    <label>Is Neo:</label><input type="checkbox" name="is_neo"><br>
+    <label>Location ID:</label><input type="text" name="location_id" required><br>
+    <label>Airline ID:</label><input type="text" name="airline_id" required><br>
+    <button type="submit">Add Airplane</button>
+</form>
+
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    <ul>
+    {% for message in messages %}
+      <li>{{ message }}</li>
+    {% endfor %}
+    </ul>
+  {% endif %}
+{% endwith %}
+
+<a href="/">Back to Home</a>
+{% endblock %}
