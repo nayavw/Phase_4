@@ -78,38 +78,72 @@ def add_person():
     return render_template('add_person.html')
 
 
-
 @app.route('/add_airplane', methods=['GET', 'POST'])
 def add_airplane():
     if request.method == 'POST':
         airline_id = request.form['airline_id']
-        tail_num = request.form['tail_num']
+        tail_num = request.form['tail_num'].strip()
         seat_cap = request.form['seat_cap']
         speed = request.form['speed']
-        location_id = request.form['location_id']
-        plane_type = request.form['plane_type']
-        maintained = request.form.get('maintained') or None
+        location_id = request.form['location_id'].strip()
+        plane_type = request.form['plane_type'].strip().lower()
         model = request.form.get('model') or None
         is_neo = request.form.get('is_neo') == 'on'
 
+        # Boolean checkbox: will be present if checked
+        maintained = request.form.get('maintained')
+        maintained = maintained.lower() in ['true', 'on', '1'] if maintained else None
+
         try:
+            seat_cap = int(seat_cap)
+            speed = int(speed)
+
+            if seat_cap <= 0 or speed <= 0:
+                flash("Seat capacity and speed must be greater than 0.")
+                return redirect('/add_airplane')
+
+            # Boeing-specific validation
+            if "boeing" in plane_type:
+                if not model:
+                    flash("Boeing planes must have a model specified.")
+                    return redirect('/add_airplane')
+                if maintained is None:
+                    flash("Boeing planes must have the 'maintained' box explicitly checked or left unchecked.")
+                    return redirect('/add_airplane')
+
             conn = get_db_connection()
             cursor = conn.cursor()
+
+            # Check if airline exists
+            cursor.execute("SELECT COUNT(*) FROM airline WHERE airline_id = %s", (airline_id,))
+            if cursor.fetchone()[0] == 0:
+                flash("Airline ID does not exist.")
+                return redirect('/add_airplane')
+
+            # Check if location is already used
+            cursor.execute("SELECT COUNT(*) FROM location WHERE location_id = %s", (location_id,))
+            if cursor.fetchone()[0] > 0:
+                flash("Location ID already in use.")
+                return redirect('/add_airplane')
+
             cursor.callproc('add_airplane', [
-                airline_id,     # 1
-                tail_num,       # 2
-                seat_cap,       # 3
-                speed,          # 4
-                location_id,    # 5
-                plane_type,     # 6
-                maintained,     # 7
-                model,          # 8
-                is_neo          # 9
+                airline_id,
+                tail_num,
+                seat_cap,
+                speed,
+                location_id,
+                plane_type,
+                maintained,
+                model,
+                is_neo
             ])
             conn.commit()
             flash('Airplane added successfully!')
+
+        except ValueError:
+            flash("Seat capacity and speed must be integers.")
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f"Error: {str(e)}")
         finally:
             cursor.close()
             conn.close()
@@ -117,6 +151,7 @@ def add_airplane():
         return redirect('/add_airplane')
 
     return render_template('add_airplane.html')
+
 
 
 @app.route('/grant_or_revoke_pilot_license', methods=['GET', 'POST'])
