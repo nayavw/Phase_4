@@ -4,6 +4,8 @@ from db.db import get_db_connection
 app = Flask(__name__)
 app.secret_key = 'sams_secret'
 
+if __name__ == '__main__':
+    app.run(debug=True)
 
 @app.route('/')
 def home():
@@ -41,25 +43,28 @@ def add_person():
         person_id = request.form['person_id']
         first_name = request.form['first_name']
         last_name = request.form['last_name']
+        location_id = request.form['location_id']  # ✅ This comes earlier now
         tax_id = request.form['tax_id']
         experience = request.form.get('experience') or None
         miles = request.form.get('miles') or None
         funds = request.form.get('funds') or None
-        location_id = request.form['location_id']
 
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
+
+            # ✅ Correct argument order:
             cursor.callproc('add_person', [
-                person_id,
-                first_name,
-                last_name,
-                tax_id,
-                experience,
-                miles,
-                funds,
-                location_id
+                person_id,      # 1
+                first_name,     # 2
+                last_name,      # 3
+                location_id,    # 4 ✅ moved up
+                tax_id,         # 5
+                experience,     # 6
+                miles,          # 7
+                funds           # 8
             ])
+
             conn.commit()
             flash('Person added successfully!')
         except Exception as e:
@@ -72,32 +77,34 @@ def add_person():
 
     return render_template('add_person.html')
 
+
+
 @app.route('/add_airplane', methods=['GET', 'POST'])
 def add_airplane():
     if request.method == 'POST':
-        tail_num = request.form['tail_num']
-        model = request.form.get('model') or None
-        seat_cap = request.form['seat_cap']
-        plane_type = request.form['plane_type']
-        speed = request.form['speed']
-        maintained = request.form.get('maintained') or None
-        is_neo = request.form.get('is_neo') == 'on'
-        location_id = request.form['location_id']
         airline_id = request.form['airline_id']
+        tail_num = request.form['tail_num']
+        seat_cap = request.form['seat_cap']
+        speed = request.form['speed']
+        location_id = request.form['location_id']
+        plane_type = request.form['plane_type']
+        maintained = request.form.get('maintained') or None
+        model = request.form.get('model') or None
+        is_neo = request.form.get('is_neo') == 'on'
 
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
             cursor.callproc('add_airplane', [
-                tail_num,
-                model,
-                seat_cap,
-                plane_type,
-                speed,
-                maintained,
-                is_neo,
-                location_id,
-                airline_id
+                airline_id,     # 1
+                tail_num,       # 2
+                seat_cap,       # 3
+                speed,          # 4
+                location_id,    # 5
+                plane_type,     # 6
+                maintained,     # 7
+                model,          # 8
+                is_neo          # 9
             ])
             conn.commit()
             flash('Airplane added successfully!')
@@ -111,6 +118,7 @@ def add_airplane():
 
     return render_template('add_airplane.html')
 
+
 @app.route('/grant_or_revoke_pilot_license', methods=['GET', 'POST'])
 def grant_or_revoke_pilot_license():
     if request.method == 'POST':
@@ -120,10 +128,13 @@ def grant_or_revoke_pilot_license():
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
+
+            # ✅ correct argument order
             cursor.callproc('grant_or_revoke_pilot_license', [
-                license_type,
-                person_id
+                person_id,      # now goes to ip_personID
+                license_type    # now goes to ip_license
             ])
+
             conn.commit()
             flash('License granted or revoked successfully!')
         except Exception as e:
@@ -142,11 +153,11 @@ def offer_flight():
     if request.method == 'POST':
         flight_id = request.form['flight_id']
         route_id = request.form['route_id']
-        progress = request.form['progress']
-        cost = request.form['cost']
-        next_time = request.form['next_time']
         support_airline = request.form['support_airline']
         support_tail = request.form['support_tail']
+        progress = request.form['progress']
+        next_time = request.form['next_time']
+        cost = request.form['cost']
 
         try:
             conn = get_db_connection()
@@ -154,11 +165,11 @@ def offer_flight():
             cursor.callproc('offer_flight', [
                 flight_id,
                 route_id,
-                progress,
-                cost,
-                next_time,
                 support_airline,
-                support_tail
+                support_tail,
+                progress,
+                next_time,
+                cost
             ])
             conn.commit()
             flash('Flight offered successfully!')
@@ -171,6 +182,7 @@ def offer_flight():
         return redirect('/offer_flight')
 
     return render_template('offer_flight.html')
+
 
 @app.route('/assign_pilot', methods=['GET', 'POST'])
 def assign_pilot():
@@ -352,12 +364,11 @@ def flights_in_the_air():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.callproc('flights_in_the_air')
 
-        results = []
-        for result in cursor.stored_results():
-            results = result.fetchall()
-            columns = result.column_names
+        cursor.execute('SELECT * FROM flights_in_the_air')
+
+        results = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
 
         return render_template('flights_in_the_air.html', rows=results, columns=columns)
 
@@ -375,14 +386,12 @@ def flights_on_the_ground():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.callproc('flights_on_the_ground')
 
-        results = []
-        for result in cursor.stored_results():
-            results = result.fetchall()
-            columns = result.column_names
+        cursor.execute('SELECT * FROM flights_on_the_ground')
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
 
-        return render_template('flights_on_the_ground.html', rows=results, columns=columns)
+        return render_template('flights_on_the_ground.html', rows=rows, columns=columns)
 
     except Exception as e:
         flash(f'Error: {str(e)}')
@@ -393,19 +402,18 @@ def flights_on_the_ground():
         conn.close()
 
 
+
 @app.route('/people_in_the_air')
 def people_in_the_air():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.callproc('people_in_the_air')
 
-        results = []
-        for result in cursor.stored_results():
-            results = result.fetchall()
-            columns = result.column_names
+        cursor.execute('SELECT * FROM people_in_the_air')
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
 
-        return render_template('people_in_the_air.html', rows=results, columns=columns)
+        return render_template('people_in_the_air.html', rows=rows, columns=columns)
 
     except Exception as e:
         flash(f'Error: {str(e)}')
@@ -416,19 +424,18 @@ def people_in_the_air():
         conn.close()
 
 
+
 @app.route('/people_on_the_ground')
 def people_on_the_ground():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.callproc('people_on_the_ground')
 
-        results = []
-        for result in cursor.stored_results():
-            results = result.fetchall()
-            columns = result.column_names
+        cursor.execute('SELECT * FROM people_on_the_ground')
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
 
-        return render_template('people_on_the_ground.html', rows=results, columns=columns)
+        return render_template('people_on_the_ground.html', rows=rows, columns=columns)
 
     except Exception as e:
         flash(f'Error: {str(e)}')
@@ -439,19 +446,18 @@ def people_on_the_ground():
         conn.close()
 
 
+
 @app.route('/route_summary')
 def route_summary():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.callproc('route_summary')
 
-        results = []
-        for result in cursor.stored_results():
-            results = result.fetchall()
-            columns = result.column_names
+        cursor.execute('SELECT * FROM route_summary')
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
 
-        return render_template('route_summary.html', rows=results, columns=columns)
+        return render_template('route_summary.html', rows=rows, columns=columns)
 
     except Exception as e:
         flash(f'Error: {str(e)}')
@@ -462,19 +468,18 @@ def route_summary():
         conn.close()
 
 
+
 @app.route('/alternative_airports')
 def alternative_airports():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.callproc('alternative_airports')
 
-        results = []
-        for result in cursor.stored_results():
-            results = result.fetchall()
-            columns = result.column_names
+        cursor.execute('SELECT * FROM alternative_airports')
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
 
-        return render_template('alternative_airports.html', rows=results, columns=columns)
+        return render_template('alternative_airports.html', rows=rows, columns=columns)
 
     except Exception as e:
         flash(f'Error: {str(e)}')
@@ -483,6 +488,7 @@ def alternative_airports():
     finally:
         cursor.close()
         conn.close()
+
 
 
 @app.route('/top_frequent_fliers')
