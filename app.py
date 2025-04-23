@@ -15,21 +15,43 @@ def home():
 @app.route('/add_airport', methods=['GET', 'POST'])
 def add_airport():
     if request.method == 'POST':
-        airport_id = request.form['airport_id']
-        name = request.form['name']
-        city = request.form['city']
-        state = request.form['state']
-        country = request.form['country']
-        location_id = request.form['location_id']
+        airport_id = request.form['airport_id'].strip()
+        name = request.form['name'].strip()
+        city = request.form['city'].strip()
+        state = request.form['state'].strip()
+        country = request.form['country'].strip()
+        location_id = request.form['location_id'].strip()
+
+        # Basic validation before hitting the DB
+        if not airport_id or len(airport_id) != 3:
+            flash("Airport ID must be exactly 3 characters.")
+            return redirect('/add_airport')
+        if not city or not state or not country or not location_id:
+            flash("City, state, country, and location ID are required.")
+            return redirect('/add_airport')
 
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
+
+            # Check if airport ID already exists
+            cursor.execute("SELECT 1 FROM airport WHERE airportID = %s", (airport_id,))
+            if cursor.fetchone():
+                flash("Airport ID already exists.")
+                return redirect('/add_airport')
+
+            # Check if location ID already exists
+            cursor.execute("SELECT 1 FROM location WHERE locationID = %s", (location_id,))
+            if cursor.fetchone():
+                flash("Location ID is already in use.")
+                return redirect('/add_airport')
+
+            # Call the stored procedure if all validations pass
             cursor.callproc('add_airport', [airport_id, name, city, state, country, location_id])
             conn.commit()
             flash('Airport added successfully!')
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f'Unexpected Error: {str(e)}')
         finally:
             cursor.close()
             conn.close()
@@ -37,38 +59,105 @@ def add_airport():
 
     return render_template('add_airport.html')
 
+
 @app.route('/add_person', methods=['GET', 'POST'])
 def add_person():
     if request.method == 'POST':
-        person_id = request.form['person_id']
-        first_name = request.form['first_name']
-        last_name = request.form['last_name']
-        location_id = request.form['location_id']  # ✅ This comes earlier now
-        tax_id = request.form['tax_id']
-        experience = request.form.get('experience') or None
-        miles = request.form.get('miles') or None
-        funds = request.form.get('funds') or None
+        person_id = request.form['person_id'].strip()
+        first_name = request.form['first_name'].strip()
+        last_name = request.form['last_name'].strip()
+        location_id = request.form['location_id'].strip()
+        tax_id = request.form['tax_id'].strip()
+        experience = request.form.get('experience')
+        miles = request.form.get('miles')
+        funds = request.form.get('funds')
+
+        # Normalize optional integers
+        experience = int(experience) if experience else None
+        miles = int(miles) if miles else None
+        funds = float(funds) if funds else None
+
+        # Step 1: Basic validation
+        if not person_id:
+            flash("Person ID is required.")
+            return redirect('/add_person')
+        if not first_name:
+            flash("First name is required.")
+            return redirect('/add_person')
+        if not location_id:
+            flash("Location ID is required.")
+            return redirect('/add_person')
+
+        # Step 2: Check that roles are mutually exclusive and complete
+        is_pilot = tax_id or experience is not None
+        is_passenger = miles is not None or funds is not None
+
+        if is_pilot and is_passenger:
+            flash("A person cannot be both a pilot and a passenger.")
+            return redirect('/add_person')
+
+        if not is_pilot or not is_passenger:
+            flash("A person must be a pilot or a passenger.")
+            return redirect('/add_person')
+
+        if (tax_id and experience is None) or (not tax_id and experience is not None):
+            flash("Pilot must have both Tax ID and Experience.")
+            return redirect('/add_person')
+
+        if (miles is not None and funds is None) or (miles is None and funds is not None):
+            flash("Passenger must have both Miles and Funds.")
+            return redirect('/add_person')
+
+        if experience is not None and experience < 0:
+            flash("Experience must be non-negative.")
+            return redirect('/add_person')
+
+        if miles is not None and miles < 0:
+            flash("Miles must be non-negative.")
+            return redirect('/add_person')
+
+        if funds is not None and funds < 0:
+            flash("Funds must be non-negative.")
+            return redirect('/add_person')
+
+        if tax_id:
+            tax_id_pattern = r'^\d{3}-\d{2}-\d{4}$'
+            if not re.match(tax_id_pattern, tax_id):
+                flash("Tax ID is in the wrong format.")
+                return redirect('/add_person')
 
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
 
-            # ✅ Correct argument order:
-            cursor.callproc('add_person', [
-                person_id,      # 1
-                first_name,     # 2
-                last_name,      # 3
-                location_id,    # 4 ✅ moved up
-                tax_id,         # 5
-                experience,     # 6
-                miles,          # 7
-                funds           # 8
-            ])
+            # Check if person ID already exists
+            cursor.execute("SELECT * FROM person WHERE personID = %s", (person_id,))
+            if cursor.fetchone():
+                flash("Person ID already exists.")
+                return redirect('/add_person')
 
+            # Check if location ID exists
+            cursor.execute("SELECT * FROM location WHERE locationID = %s", (location_id,))
+            if not cursor.fetchone():
+                flash("Location ID does not exist.")
+                return redirect('/add_person')
+
+            # Call the procedure
+            cursor.callproc('add_person', [
+                person_id,
+                first_name,
+                last_name,
+                location_id,
+                tax_id if tax_id else None,
+                experience,
+                miles,
+                funds
+            ])
             conn.commit()
             flash('Person added successfully!')
+
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f'Unexpected error: {str(e)}')
         finally:
             cursor.close()
             conn.close()
@@ -157,21 +246,30 @@ def add_airplane():
 @app.route('/grant_or_revoke_pilot_license', methods=['GET', 'POST'])
 def grant_or_revoke_pilot_license():
     if request.method == 'POST':
-        license_type = request.form['license_type']
-        person_id = request.form['person_id']
+        license_type = request.form['license_type'].strip()
+        person_id = request.form['person_id'].strip()
+
+        if not person_id:
+            flash("Person ID is required.")
+            return redirect('/grant_or_revoke_pilot_license')
+        if not license_type:
+            flash("License type is required.")
+            return redirect('/grant_or_revoke_pilot_license')
 
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
 
-            # ✅ correct argument order
-            cursor.callproc('grant_or_revoke_pilot_license', [
-                person_id,      # now goes to ip_personID
-                license_type    # now goes to ip_license
-            ])
+            cursor.execute("SELECT * FROM pilot WHERE personID = %s", (person_id,))
+            if not cursor.fetchone():
+                flash("Person ID does not exist or is not a pilot.")
+                return redirect('/grant_or_revoke_pilot_license')
 
+            # Step 3: Call the stored procedure
+            cursor.callproc('grant_or_revoke_pilot_license', [person_id, license_type])
             conn.commit()
             flash('License granted or revoked successfully!')
+
         except Exception as e:
             flash(f'Error: {str(e)}')
         finally:
