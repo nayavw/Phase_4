@@ -1,5 +1,9 @@
+import re
+
+import mysql
 from flask import Flask, render_template, request, redirect, flash
 from db.db import get_db_connection
+from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = 'sams_secret'
@@ -22,7 +26,6 @@ def add_airport():
         country = request.form['country'].strip()
         location_id = request.form['location_id'].strip()
 
-        # Basic validation before hitting the DB
         if not airport_id or len(airport_id) != 3:
             flash("Airport ID must be exactly 3 characters.")
             return redirect('/add_airport')
@@ -34,27 +37,30 @@ def add_airport():
             conn = get_db_connection()
             cursor = conn.cursor()
 
-            # Check if airport ID already exists
-            cursor.execute("SELECT 1 FROM airport WHERE airportID = %s", (airport_id,))
+            cursor.execute("SELECT * FROM airport WHERE airportID = %s", (airport_id,))
             if cursor.fetchone():
                 flash("Airport ID already exists.")
                 return redirect('/add_airport')
 
-            # Check if location ID already exists
-            cursor.execute("SELECT 1 FROM location WHERE locationID = %s", (location_id,))
+            cursor.execute("SELECT * FROM location WHERE locationID = %s", (location_id,))
             if cursor.fetchone():
                 flash("Location ID is already in use.")
                 return redirect('/add_airport')
 
-            # Call the stored procedure if all validations pass
             cursor.callproc('add_airport', [airport_id, name, city, state, country, location_id])
             conn.commit()
             flash('Airport added successfully!')
+
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
+
         except Exception as e:
-            flash(f'Unexpected Error: {str(e)}')
+            flash(f"An unexpected error occurred: {str(e)}")
         finally:
             cursor.close()
             conn.close()
+
         return redirect('/add_airport')
 
     return render_template('add_airport.html')
@@ -72,12 +78,10 @@ def add_person():
         miles = request.form.get('miles')
         funds = request.form.get('funds')
 
-        # Normalize optional integers
         experience = int(experience) if experience else None
         miles = int(miles) if miles else None
         funds = float(funds) if funds else None
 
-        # Step 1: Basic validation
         if not person_id:
             flash("Person ID is required.")
             return redirect('/add_person')
@@ -88,7 +92,6 @@ def add_person():
             flash("Location ID is required.")
             return redirect('/add_person')
 
-        # Step 2: Check that roles are mutually exclusive and complete
         is_pilot = tax_id or experience is not None
         is_passenger = miles is not None or funds is not None
 
@@ -130,19 +133,16 @@ def add_person():
             conn = get_db_connection()
             cursor = conn.cursor()
 
-            # Check if person ID already exists
             cursor.execute("SELECT * FROM person WHERE personID = %s", (person_id,))
             if cursor.fetchone():
                 flash("Person ID already exists.")
                 return redirect('/add_person')
 
-            # Check if location ID exists
             cursor.execute("SELECT * FROM location WHERE locationID = %s", (location_id,))
             if not cursor.fetchone():
                 flash("Location ID does not exist.")
                 return redirect('/add_person')
 
-            # Call the procedure
             cursor.callproc('add_person', [
                 person_id,
                 first_name,
@@ -156,12 +156,15 @@ def add_person():
             conn.commit()
             flash('Person added successfully!')
 
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
+
         except Exception as e:
-            flash(f'Unexpected error: {str(e)}')
+            flash(f"An unexpected error occurred: {str(e)}")
         finally:
             cursor.close()
             conn.close()
-
         return redirect('/add_person')
 
     return render_template('add_person.html')
@@ -179,7 +182,6 @@ def add_airplane():
         model = request.form.get('model') or None
         is_neo = request.form.get('is_neo') == 'on'
 
-        # Boolean checkbox: will be present if checked
         maintained = request.form.get('maintained')
         maintained = maintained.lower() in ['true', 'on', '1'] if maintained else None
 
@@ -191,7 +193,6 @@ def add_airplane():
                 flash("Seat capacity and speed must be greater than 0.")
                 return redirect('/add_airplane')
 
-            # Boeing-specific validation
             if "boeing" in plane_type:
                 if not model:
                     flash("Boeing planes must have a model specified.")
@@ -203,13 +204,11 @@ def add_airplane():
             conn = get_db_connection()
             cursor = conn.cursor()
 
-            # Check if airline exists
             cursor.execute("SELECT COUNT(*) FROM airline WHERE airline_id = %s", (airline_id,))
             if cursor.fetchone()[0] == 0:
                 flash("Airline ID does not exist.")
                 return redirect('/add_airplane')
 
-            # Check if location is already used
             cursor.execute("SELECT COUNT(*) FROM location WHERE location_id = %s", (location_id,))
             if cursor.fetchone()[0] > 0:
                 flash("Location ID already in use.")
@@ -231,8 +230,12 @@ def add_airplane():
 
         except ValueError:
             flash("Seat capacity and speed must be integers.")
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
+
         except Exception as e:
-            flash(f"Error: {str(e)}")
+            flash(f"An unexpected error occurred: {str(e)}")
         finally:
             cursor.close()
             conn.close()
@@ -265,13 +268,17 @@ def grant_or_revoke_pilot_license():
                 flash("Person ID does not exist or is not a pilot.")
                 return redirect('/grant_or_revoke_pilot_license')
 
-            # Step 3: Call the stored procedure
             cursor.callproc('grant_or_revoke_pilot_license', [person_id, license_type])
             conn.commit()
             flash('License granted or revoked successfully!')
 
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
+
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f"An unexpected error occurred: {str(e)}")
+
         finally:
             cursor.close()
             conn.close()
@@ -284,30 +291,99 @@ def grant_or_revoke_pilot_license():
 @app.route('/offer_flight', methods=['GET', 'POST'])
 def offer_flight():
     if request.method == 'POST':
-        flight_id = request.form['flight_id']
-        route_id = request.form['route_id']
-        support_airline = request.form['support_airline']
-        support_tail = request.form['support_tail']
-        progress = request.form['progress']
-        next_time = request.form['next_time']
-        cost = request.form['cost']
+        flight_id = request.form['flight_id'].strip()
+        route_id = request.form['route_id'].strip()
+        support_airline = request.form['support_airline'].strip()
+        support_tail = request.form['support_tail'].strip()
+        progress = request.form['progress'].strip()
+        next_time = request.form['next_time'].strip()
+        cost = request.form['cost'].strip()
+
+        if not flight_id:
+            flash("Flight ID is required.")
+            return redirect('/offer_flight')
+        if not route_id:
+            flash("Route ID is required.")
+            return redirect('/offer_flight')
+        if not progress.isdigit():
+            flash("Progress must be a non-negative integer.")
+            return redirect('/offer_flight')
+        progress = int(progress)
+        if not cost.isdigit():
+            flash("Cost must be a non-negative integer.")
+            return redirect('/offer_flight')
+        cost = int(cost)
+        if not next_time:
+            flash("Next time is required.")
+            return redirect('/offer_flight')
+
+        try:
+            datetime.strptime(next_time, '%H:%M:%S')
+        except ValueError:
+            flash("Next time must be in the correct format.")
+            return redirect('/offer_flight')
 
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
+
+            cursor.execute("SELECT * FROM flight WHERE flightID = %s", (flight_id,))
+            if cursor.fetchone():
+                flash("Flight ID already exists.")
+                return redirect('/offer_flight')
+
+            cursor.execute("SELECT * FROM route WHERE routeID = %s", (route_id,))
+            if not cursor.fetchone():
+                flash("Route ID does not exist.")
+                return redirect('/offer_flight')
+
+            cursor.execute("SELECT COUNT(*) AS stop_count FROM route_path WHERE routeID = %s", (route_id,))
+            result = cursor.fetchone()
+            if result:
+                stop_count = result['stop_count']
+                if progress < 0 or progress >= stop_count:
+                    flash("Progress must be between 0 and the number of stops in the route minus one.")
+                    return redirect('/offer_flight')
+            else:
+                flash("Unable to retrieve route path information.")
+                return redirect('/offer_flight')
+
+            if support_airline and support_tail:
+                cursor.execute("""SELECT * FROM airplane WHERE airlineID = %s AND tail_num = %s
+                """, (support_airline, support_tail))
+                if not cursor.fetchone():
+                    flash("Specified airplane does not exist.")
+                    return redirect('/offer_flight')
+
+                cursor.execute("""
+                    SELECT * FROM flight WHERE support_airline = %s AND support_tail = %s""",
+                    (support_airline, support_tail))
+                if cursor.fetchone():
+                    flash("Specified airplane is already assigned to another flight.")
+                    return redirect('/offer_flight')
+            elif support_airline or support_tail:
+                flash("Both support airline and support tail must be provided together.")
+                return redirect('/offer_flight')
+
             cursor.callproc('offer_flight', [
                 flight_id,
                 route_id,
-                support_airline,
-                support_tail,
+                support_airline if support_airline else None,
+                support_tail if support_tail else None,
                 progress,
                 next_time,
                 cost
             ])
             conn.commit()
             flash('Flight offered successfully!')
+
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
+
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f"An unexpected error occurred: {str(e)}")
+
         finally:
             cursor.close()
             conn.close()
@@ -320,17 +396,78 @@ def offer_flight():
 @app.route('/assign_pilot', methods=['GET', 'POST'])
 def assign_pilot():
     if request.method == 'POST':
-        flight_id = request.form['flight_id']
-        person_id = request.form['person_id']
+        flight_id = request.form.get('flight_id', '').strip()
+        person_id = request.form.get('person_id', '').strip()
+
+        if not flight_id:
+            flash("Flight ID is required.")
+            return redirect('/assign_pilot')
+        if not person_id:
+            flash("Pilot Person ID is required.")
+            return redirect('/assign_pilot')
 
         try:
             conn = get_db_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(dictionary=True)
+
+            cursor.execute("""
+                SELECT f.routeID, f.progress, f.support_airline, f.support_tail, a.plane_type, a.locationID AS plane_location
+                FROM flight f
+                LEFT JOIN airplane a ON f.support_airline = a.airlineID AND f.support_tail = a.tail_num
+                WHERE f.flightID = %s AND f.airplane_status = 'on_ground'
+            """, (flight_id,))
+            flight = cursor.fetchone()
+            if not flight:
+                flash("Flight does not exist or is not on the ground.")
+                return redirect('/assign_pilot')
+
+            cursor.execute("""
+                SELECT COUNT(*) AS total_legs
+                FROM route_path
+                WHERE routeID = %s
+            """, (flight['routeID'],))
+            route_info = cursor.fetchone()
+            if flight['progress'] >= route_info['total_legs']:
+                flash("Flight has already completed its route.")
+                return redirect('/assign_pilot')
+
+            cursor.execute("""
+                SELECT p.personID, pe.locationID AS pilot_location
+                FROM pilot p
+                JOIN person pe ON p.personID = pe.personID
+                WHERE p.personID = %s AND p.commanding_flight IS NULL
+            """, (person_id,))
+            pilot = cursor.fetchone()
+            if not pilot:
+                flash("Pilot does not exist or is already assigned to another flight.")
+                return redirect('/assign_pilot')
+
+            plane_type = flight['plane_type']
+            required_license = 'GENERAL' if not plane_type else plane_type.upper()
+
+            cursor.execute("""
+                SELECT 1
+                FROM pilot_licenses
+                WHERE personID = %s AND UPPER(license) = %s
+            """, (person_id, required_license))
+            license_check = cursor.fetchone()
+            if not license_check:
+                flash(f"Pilot does not have the required {required_license} license.")
+                return redirect('/assign_pilot')
+
+            if pilot['pilot_location'] != flight['plane_location']:
+                flash("Pilot is not at the same location as the airplane.")
+                return redirect('/assign_pilot')
+
             cursor.callproc('assign_pilot', [flight_id, person_id])
             conn.commit()
             flash('Pilot assigned successfully!')
+
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f"An unexpected error occurred: {str(e)}")
         finally:
             cursor.close()
             conn.close()
@@ -343,21 +480,85 @@ def assign_pilot():
 @app.route('/flight_takeoff', methods=['GET', 'POST'])
 def flight_takeoff():
     if request.method == 'POST':
-        flight_id = request.form['flight_id']
+        flight_id = request.form['flight_id'].strip()
+
+        if not flight_id:
+            flash("Flight ID is required.")
+            return redirect('/flight_takeoff')
 
         try:
             conn = get_db_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(dictionary=True)
+
+            cursor.execute("""
+                SELECT f.flightID, f.progress, COUNT(rp.sequence) AS total_legs
+                FROM flight f
+                JOIN route_path rp ON f.routeID = rp.routeID
+                WHERE f.flightID = %s AND f.airplane_status = 'on_ground'
+                GROUP BY f.flightID, f.progress
+            """, (flight_id,))
+            flight = cursor.fetchone()
+
+            if not flight:
+                flash("Flight does not exist or is not on the ground.")
+                return redirect('/flight_takeoff')
+
+            if flight['progress'] >= flight['total_legs']:
+                flash("Flight has already completed its route.")
+                return redirect('/flight_takeoff')
+
+            cursor.execute("""
+                SELECT support_airline, support_tail FROM flight
+                WHERE flightID = %s AND support_airline IS NOT NULL AND support_tail IS NOT NULL
+            """, (flight_id,))
+            airplane = cursor.fetchone()
+
+            if not airplane:
+                flash("Flight does not have an assigned airplane.")
+                return redirect('/flight_takeoff')
+
+            cursor.execute("""
+                SELECT a.plane_type FROM airplane a
+                JOIN flight f ON a.airlineID = f.support_airline AND a.tail_num = f.support_tail
+                WHERE f.flightID = %s
+            """, (flight_id,))
+            plane = cursor.fetchone()
+
+            if not plane:
+                flash("Assigned airplane details not found.")
+                return redirect('/flight_takeoff')
+
+            plane_type = plane['plane_type'].strip().upper()
+
+            cursor.execute("""
+                SELECT COUNT(*) AS pilot_count FROM pilot
+                WHERE commanding_flight = %s
+            """, (flight_id,))
+            pilot_info = cursor.fetchone()
+            pilot_count = pilot_info['pilot_count']
+
+            required_pilots = 2 if plane_type == 'BOEING' else 1
+
+            if pilot_count < required_pilots:
+                flash(f"Not enough pilots assigned. {plane_type} requires {required_pilots} pilot(s). Flight will be delayed by 30 minutes.")
+                cursor.callproc('flight_takeoff', [flight_id])
+                conn.commit()
+                return redirect('/flight_takeoff')
+
             cursor.callproc('flight_takeoff', [flight_id])
             conn.commit()
             flash('Flight took off successfully!')
+
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
+
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f"An unexpected error occurred: {str(e)}")
+
         finally:
             cursor.close()
             conn.close()
-
-        return redirect('/flight_takeoff')
 
     return render_template('flight_takeoff.html')
 
@@ -365,16 +566,35 @@ def flight_takeoff():
 @app.route('/flight_landing', methods=['GET', 'POST'])
 def flight_landing():
     if request.method == 'POST':
-        flight_id = request.form['flight_id']
+        flight_id = request.form['flight_id'].strip()
+
+        if not flight_id:
+            flash("Flight ID is required.")
+            return redirect('/flight_landing')
 
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT * FROM flight 
+                WHERE flightID = %s AND airplane_status = 'in_flight'
+            """, (flight_id,))
+            if not cursor.fetchone():
+                flash("Flight does not exist or is not currently in flight.")
+                return redirect('/flight_landing')
+
             cursor.callproc('flight_landing', [flight_id])
             conn.commit()
             flash('Flight landed successfully!')
+
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
+
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f"An unexpected error occurred: {str(e)}")
+
         finally:
             cursor.close()
             conn.close()
@@ -384,19 +604,48 @@ def flight_landing():
     return render_template('flight_landing.html')
 
 
+
 @app.route('/passengers_board', methods=['GET', 'POST'])
 def passengers_board():
     if request.method == 'POST':
-        flight_id = request.form['flight_id']
+        flight_id = request.form.get('flight_id', '').strip()
+        if not flight_id:
+            flash("Flight ID is required.")
+            return redirect('/passengers_board')
 
         try:
             conn = get_db_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(dictionary=True)
+
+            cursor.execute("""
+                SELECT progress, routeID FROM flight
+                WHERE flightID = %s AND airplane_status = 'on_ground'
+            """, (flight_id,))
+            flight = cursor.fetchone()
+            if not flight:
+                flash("Flight does not exist or is not on the ground.")
+                return redirect('/passengers_board')
+
+            progress = flight['progress']
+            route_id = flight['routeID']
+
+            cursor.execute("""
+                SELECT COUNT(*) AS total_legs FROM route_path
+                WHERE routeID = %s
+            """, (route_id,))
+            total_legs = cursor.fetchone()['total_legs']
+            if progress >= total_legs:
+                flash("Flight has completed all legs.")
+                return redirect('/passengers_board')
+
             cursor.callproc('passengers_board', [flight_id])
             conn.commit()
             flash('Passengers boarded successfully!')
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f"An unexpected error occurred: {str(e)}")
         finally:
             cursor.close()
             conn.close()
@@ -406,19 +655,42 @@ def passengers_board():
     return render_template('passengers_board.html')
 
 
+
 @app.route('/passengers_disembark', methods=['GET', 'POST'])
 def passengers_disembark():
     if request.method == 'POST':
-        flight_id = request.form['flight_id']
+        flight_id = request.form['flight_id'].strip()
+
+        if not flight_id:
+            flash("Flight ID is required.")
+            return redirect('/passengers_disembark')
 
         try:
             conn = get_db_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(dictionary=True)
+
+            cursor.execute("""
+                SELECT airplane_status FROM flight
+                WHERE flightID = %s
+            """, (flight_id,))
+            flight = cursor.fetchone()
+
+            if not flight:
+                flash("Flight ID does not exist.")
+                return redirect('/passengers_disembark')
+
+            if flight['airplane_status'] != 'on_ground':
+                flash("Flight must be on the ground to disembark passengers.")
+                return redirect('/passengers_disembark')
+
             cursor.callproc('passengers_disembark', [flight_id])
             conn.commit()
             flash('Passengers disembarked successfully!')
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f"An unexpected error occurred: {str(e)}")
         finally:
             cursor.close()
             conn.close()
@@ -431,16 +703,85 @@ def passengers_disembark():
 @app.route('/recycle_crew', methods=['GET', 'POST'])
 def recycle_crew():
     if request.method == 'POST':
-        flight_id = request.form['flight_id']
+        flight_id = request.form['flight_id'].strip()
+
+        if not flight_id:
+            flash("Flight ID is required.")
+            return redirect('/recycle_crew')
 
         try:
             conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.callproc('recycle_crew', [flight_id])
+            cursor = conn.cursor(dictionary=True)
+
+            cursor.execute("SELECT * FROM flight WHERE flightID = %s", (flight_id,))
+            flight = cursor.fetchone()
+            if not flight:
+                flash("Flight ID does not exist.")
+                return redirect('/recycle_crew')
+
+            if flight['airplane_status'].lower() != 'on_ground':
+                flash("Flight must be on the ground to recycle crew.")
+                return redirect('/recycle_crew')
+
+            cursor.execute("SELECT COUNT(*) AS total_legs FROM route_path WHERE routeID = %s", (flight['routeID'],))
+            total_legs_result = cursor.fetchone()
+            total_legs = total_legs_result['total_legs'] if total_legs_result else 0
+
+            if flight['progress'] < total_legs:
+                flash("Flight has not completed all legs of its route.")
+                return redirect('/recycle_crew')
+
+            cursor.execute("""
+                SELECT l.arrival
+                FROM route_path rp
+                JOIN leg l ON rp.legID = l.legID
+                WHERE rp.routeID = %s AND rp.sequence = %s
+                LIMIT 1
+            """, (flight['routeID'], total_legs))
+            arrival_result = cursor.fetchone()
+            if not arrival_result:
+                flash("Unable to determine arrival airport.")
+                return redirect('/recycle_crew')
+            arrival_airport = arrival_result['arrival']
+
+            cursor.execute("SELECT locationID FROM airport WHERE airportID = %s", (arrival_airport,))
+            location_result = cursor.fetchone()
+            if not location_result:
+                flash("Arrival airport location not found.")
+                return redirect('/recycle_crew')
+            arrival_location = location_result['locationID']
+
+            cursor.execute("""
+                SELECT COUNT(*) AS passenger_count
+                FROM passenger ps
+                JOIN person p ON ps.personID = p.personID
+                WHERE p.locationID = %s
+            """, (arrival_location,))
+            passenger_count_result = cursor.fetchone()
+            passenger_count = passenger_count_result['passenger_count'] if passenger_count_result else 0
+
+            if passenger_count > 0:
+                flash("Passengers are still present at the arrival location.")
+                return redirect('/recycle_crew')
+
+            cursor.execute("""
+                UPDATE person p
+                JOIN pilot pl ON p.personID = pl.personID
+                SET p.locationID = %s
+                WHERE pl.commanding_flight = %s
+            """, (arrival_location, flight_id))
+
+            cursor.execute("""
+                UPDATE pilot
+                SET commanding_flight = NULL
+                WHERE commanding_flight = %s
+            """, (flight_id,))
+
             conn.commit()
-            flash('Crew recycled successfully!')
+            flash('Crew recycled successfully.')
+
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f"An error occurred: {str(e)}")
         finally:
             cursor.close()
             conn.close()
@@ -450,19 +791,67 @@ def recycle_crew():
     return render_template('recycle_crew.html')
 
 
+
 @app.route('/retire_flight', methods=['GET', 'POST'])
 def retire_flight():
     if request.method == 'POST':
-        flight_id = request.form['flight_id']
+        flight_id = request.form['flight_id'].strip()
+
+        if not flight_id:
+            flash("Flight ID is required.")
+            return redirect('/retire_flight')
 
         try:
             conn = get_db_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(dictionary=True)
+
+            cursor.execute("SELECT * FROM flight WHERE flightID = %s", (flight_id,))
+            flight = cursor.fetchone()
+            if not flight:
+                flash("Flight ID does not exist.")
+                return redirect('/retire_flight')
+
+            if flight['airplane_status'] != 'on_ground':
+                flash("Flight must be on the ground to be retired.")
+                return redirect('/retire_flight')
+
+            cursor.execute("SELECT COUNT(*) AS total_legs FROM route_path WHERE routeID = %s", (flight['routeID'],))
+            result = cursor.fetchone()
+            total_legs = result['total_legs'] if result else 0
+
+            if flight['progress'] != 0 and flight['progress'] != total_legs:
+                flash("Flight must be at the start or end of its route to be retired.")
+                return redirect('/retire_flight')
+
+            cursor.execute("""
+                SELECT COUNT(*) AS passenger_count
+                FROM passenger ps
+                JOIN person p ON ps.personID = p.personID
+                WHERE p.locationID = (
+                    SELECT locationID FROM airplane
+                    WHERE airlineID = %s AND tail_num = %s
+                    LIMIT 1
+                )
+            """, (flight['support_airline'], flight['support_tail']))
+            result = cursor.fetchone()
+            if result and result['passenger_count'] > 0:
+                flash("All passengers must have disembarked before retiring the flight.")
+                return redirect('/retire_flight')
+
+            cursor.execute("SELECT COUNT(*) AS pilot_count FROM pilot WHERE commanding_flight = %s", (flight_id,))
+            result = cursor.fetchone()
+            if result and result['pilot_count'] > 0:
+                flash("All pilots must be unassigned before retiring the flight.")
+                return redirect('/retire_flight')
+
             cursor.callproc('retire_flight', [flight_id])
             conn.commit()
-            flash('Flight retired successfully!')
+            flash("Flight retired successfully!")
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f"An unexpected error occurred: {str(e)}")
         finally:
             cursor.close()
             conn.close()
@@ -470,6 +859,7 @@ def retire_flight():
         return redirect('/retire_flight')
 
     return render_template('retire_flight.html')
+
 
 
 @app.route('/simulation_cycle', methods=['GET', 'POST'])
@@ -481,8 +871,12 @@ def simulation_cycle():
             cursor.callproc('simulation_cycle')
             conn.commit()
             flash('Simulation cycle executed successfully!')
+
+        except mysql.connector.Error as err:
+            flash(f"Database error: {err.msg}")
+
         except Exception as e:
-            flash(f'Error: {str(e)}')
+            flash(f"An unexpected error occurred: {str(e)}")
         finally:
             cursor.close()
             conn.close()
