@@ -1,4 +1,5 @@
 import re
+from operator import truediv
 
 import mysql
 from flask import Flask, render_template, request, redirect, flash
@@ -92,23 +93,20 @@ def add_person():
             flash("Location ID is required.")
             return redirect('/add_person')
 
-        is_pilot = tax_id or experience is not None
-        is_passenger = miles is not None or funds is not None
+        if tax_id is not None and experience is not None:
+            is_pilot = True
+            is_passenger = False
+
+        if miles is not None and funds is not None:
+            is_passenger = True
+            is_pilot = False
 
         if is_pilot and is_passenger:
             flash("A person cannot be both a pilot and a passenger.")
             return redirect('/add_person')
 
-        if not is_pilot or not is_passenger:
+        if not is_pilot and not is_passenger:
             flash("A person must be a pilot or a passenger.")
-            return redirect('/add_person')
-
-        if (tax_id and experience is None) or (not tax_id and experience is not None):
-            flash("Pilot must have both Tax ID and Experience.")
-            return redirect('/add_person')
-
-        if (miles is not None and funds is None) or (miles is None and funds is not None):
-            flash("Passenger must have both Miles and Funds.")
             return redirect('/add_person')
 
         if experience is not None and experience < 0:
@@ -173,45 +171,70 @@ def add_person():
 @app.route('/add_airplane', methods=['GET', 'POST'])
 def add_airplane():
     if request.method == 'POST':
-        airline_id = request.form['airline_id']
-        tail_num = request.form['tail_num'].strip()
-        seat_cap = request.form['seat_cap']
-        speed = request.form['speed']
-        location_id = request.form['location_id'].strip()
-        plane_type = request.form['plane_type'].strip().lower()
-        model = request.form.get('model') or None
-        is_neo = request.form.get('is_neo') == 'on'
-
-        maintained = request.form.get('maintained')
-        maintained = maintained.lower() in ['true', 'on', '1'] if maintained else None
-
         try:
-            seat_cap = int(seat_cap)
-            speed = int(speed)
+            airline_id = request.form.get('airline_id', '').strip()
+            tail_num = request.form.get('tail_num', '').strip()
+            seat_cap_raw = request.form.get('seat_cap', '').strip()
+            speed_raw = request.form.get('speed', '').strip()
+            location_id = request.form.get('location_id', '').strip()
+            plane_type_raw = request.form.get('plane_type', '').strip()
+            model_raw = request.form.get('model', '').strip()
+            is_neo = 'is_neo' in request.form
+            maintained = 'maintained' in request.form
+
+            seat_cap = int(seat_cap_raw) if seat_cap_raw else None
+            speed = int(speed_raw) if speed_raw else None
+            plane_type = plane_type_raw if plane_type_raw != '' else None
+            model = model_raw if model_raw != '' else None
+
+            normalized_type = plane_type.lower() if plane_type else None
+            neo_val = is_neo if normalized_type == 'airbus' else None
+            model_val = model if normalized_type == 'boeing' else None
+
 
             if seat_cap <= 0 or speed <= 0:
                 flash("Seat capacity and speed must be greater than 0.")
                 return redirect('/add_airplane')
 
-            if "boeing" in plane_type:
-                if not model:
-                    flash("Boeing planes must have a model specified.")
+            if plane_type is None:
+                if model is not None or is_neo:
+                    flash("Non-specified types must not include model or neo values.")
                     return redirect('/add_airplane')
-                if maintained is None:
-                    flash("Boeing planes must have the 'maintained' box explicitly checked or left unchecked.")
+            elif normalized_type == 'boeing':
+                if model_val is None:
+                    flash("Boeing airplanes must have a model.")
+                    return redirect('/add_airplane')
+                if is_neo:
+                    flash("Boeing airplanes must not specify neo.")
+                    return redirect('/add_airplane')
+            elif normalized_type == 'airbus':
+                if not is_neo:
+                    flash("Airbus airplanes must specify neo.")
+                    return redirect('/add_airplane')
+                if model is not None:
+                    flash("Airbus airplanes must not specify model.")
+                    return redirect('/add_airplane')
+            else:
+                if model is not None or is_neo:
+                    flash("Other airplane types must not specify model or neo.")
                     return redirect('/add_airplane')
 
             conn = get_db_connection()
             cursor = conn.cursor()
 
-            cursor.execute("SELECT COUNT(*) FROM airline WHERE airline_id = %s", (airline_id,))
+            cursor.execute("SELECT COUNT(*) FROM airline WHERE airlineID = %s", (airline_id,))
             if cursor.fetchone()[0] == 0:
                 flash("Airline ID does not exist.")
                 return redirect('/add_airplane')
 
-            cursor.execute("SELECT COUNT(*) FROM location WHERE location_id = %s", (location_id,))
+            cursor.execute("SELECT COUNT(*) FROM airplane WHERE airlineID = %s AND tail_num = %s", (airline_id, tail_num))
             if cursor.fetchone()[0] > 0:
-                flash("Location ID already in use.")
+                flash("This tail number already exists for the given airline.")
+                return redirect('/add_airplane')
+
+            cursor.execute("SELECT COUNT(*) FROM location WHERE locationID = %s", (location_id,))
+            if cursor.fetchone()[0] > 0:
+                flash("Location ID already exists in the database.")
                 return redirect('/add_airplane')
 
             cursor.callproc('add_airplane', [
@@ -222,27 +245,29 @@ def add_airplane():
                 location_id,
                 plane_type,
                 maintained,
-                model,
-                is_neo
+                model_val,
+                neo_val
             ])
             conn.commit()
-            flash('Airplane added successfully!')
+            flash("Airplane added successfully!")
 
         except ValueError:
-            flash("Seat capacity and speed must be integers.")
-
+            flash("Seat capacity and speed must be valid integers.")
         except mysql.connector.Error as err:
             flash(f"Database error: {err.msg}")
-
         except Exception as e:
-            flash(f"An unexpected error occurred: {str(e)}")
+            flash(f"Unexpected error: {str(e)}")
         finally:
-            cursor.close()
-            conn.close()
-
+            try:
+                cursor.close()
+                conn.close()
+            except:
+                pass
         return redirect('/add_airplane')
 
     return render_template('add_airplane.html')
+
+
 
 
 
@@ -340,7 +365,7 @@ def offer_flight():
             cursor.execute("SELECT COUNT(*) AS stop_count FROM route_path WHERE routeID = %s", (route_id,))
             result = cursor.fetchone()
             if result:
-                stop_count = result['stop_count']
+                stop_count = result[0]
                 if progress < 0 or progress >= stop_count:
                     flash("Progress must be between 0 and the number of stops in the route minus one.")
                     return redirect('/offer_flight')
@@ -455,9 +480,6 @@ def assign_pilot():
                 flash(f"Pilot does not have the required {required_license} license.")
                 return redirect('/assign_pilot')
 
-            if pilot['pilot_location'] != flight['plane_location']:
-                flash("Pilot is not at the same location as the airplane.")
-                return redirect('/assign_pilot')
 
             cursor.callproc('assign_pilot', [flight_id, person_id])
             conn.commit()
